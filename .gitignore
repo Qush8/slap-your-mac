@@ -5,6 +5,7 @@ __pycache__/
 .venv-build/
 build/
 dist/
+releases/*.zip
 *.egg-info/
 
 # Accidental PyInstaller copy at repo root (real output is dist/SlapYourMac.app)

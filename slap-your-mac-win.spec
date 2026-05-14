@@ -19,6 +19,7 @@ a = Analysis(
         "_sounddevice",
         "_sounddevice_data",
         "playsound",
+        "psutil",
         "cffi",
         "_cffi_backend",
     ],

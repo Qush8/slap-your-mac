@@ -2,6 +2,23 @@
 
 Play sounds when the laptop is tapped — **accelerometer mode on compatible macOS notebooks** (`macimu`, typically needs `sudo`) or **microphone mode** (works on macOS **and Windows**).
 
+## Who runs what?
+
+| Scenario | Goal | Typical steps |
+|---------|------|----------------|
+| **End user** (frozen app) | No Python tools | Receive **`SlapYourMac.app`** (macOS) or a **zip** of **`dist/SlapYourMac`** (Windows). First run: microphone permission when asked; bundled clips live in app support folders (see below). |
+| **Developer** (build locally) | Reproducible venv + PyInstaller | macOS: **`scripts/build_mac_app.sh`**; Windows: **`scripts/setup_and_build_windows.ps1`**. |
+
+**Silent “Next–Next installer” installers** (MSI, Inno Setup, signed macOS `.pkg`) are **not part of this repo by default**. They’re possible as a separate packaging step later (including codesign/notarization on Mac).
+
+### Download frozen Windows zip (without Git clone)
+
+The repo stays **without** bulky zips in git history — instead **GitHub Actions** builds a real Windows package on Microsoft’s runners:
+
+1. Open your repo → **Actions** → workflow **Build Windows zip** → **Run workflow** (manual run), or push a Git tag **`v1.0.0`** etc. so the workflow **also attaches** `SlapYourMac-windows.zip` to a **GitHub Release** (permalink for friends — WeTransfer‑style „one stable link”).
+2. When the job finishes, open **Build Windows zip → latest run → Artifacts** and download **`SlapYourMac-windows.zip`**, or grab it from **Releases** if you tagged.
+3. Recipients unzip, open **`SlapYourMac/SlapYourMac.exe`** (whole folder stays together).
+
 ## Run from source (macOS)
 
 ```bash
@@ -13,13 +30,13 @@ python slap_detector.py
 
 macOS skips the **`playsound`** wheel (playback uses **`afplay`**). That avoids install failures on very new Python (e.g. 3.14) where `playsound` often does not build.
 
-On a **notebook Mac**, you can **also** play the same clips when you plug in wall power (battery → mains):
+On a **notebook Mac**, you can **also** play the same clips when you plug in wall power (battery → mains). Detection uses **`pmset -g batt`**. **`--suppress-apple-power-chime`**, **`--keep-apple-power-chime`**, and **PowerChime** muting apply **only on macOS**.
 
 ```bash
 python slap_detector.py --sound-on-ac-connect
 ```
 
-This **automatically mutes Apple's built-in charger ding** (PowerChime via `defaults`) so you mainly hear SlapYourMac. **Persisted**: you only see the explanatory message once; later launches stay quiet unless you revert below. Same **`--alternate-sounds`**, **`--cooldown`**, and clip-library rules as slap triggers.
+With `--sound-on-ac-connect`, SlapYourMac **automatically mutes Apple's built-in charger ding** (PowerChime via `defaults`) so you mainly hear SlapYourMac. **Persisted**: you only see the explanatory message once; later launches stay quiet unless you revert below. Same **`--alternate-sounds`**, **`--cooldown`**, and clip-library rules as slap triggers.
 
 Keep Apple's ding alongside your clips:
 
@@ -33,7 +50,7 @@ Mute Apple's ding **without** AC clip playback (mic/IMU only):
 python slap_detector.py --suppress-apple-power-chime
 ```
 
-Uses **`pmset -g batt`** for AC detection; desktops without notebook battery logging may skip hooks. Undo Apple ding only:
+Desktops without notebook battery logging may not get AC transitions. Undo Apple ding only:
 
 ```bash
 defaults write com.apple.PowerChime ChimeOnNoHardware -bool false
@@ -54,6 +71,16 @@ Grant **microphone** access when prompted. The script uses Windows’ **default 
 
 Playback on Windows goes through **`playsound`** (often fine for `.mp3`/`.wav`). If `.m4a` fails or stutters, try `.mp3` or `.wav` clips instead.
 
+### Charger connect sound (battery → AC) on Windows
+
+On a **notebook that reports battery state**, **`--sound-on-ac-connect`** plays the **same rotating clip library** when you plug in mains. **`psutil`** reads `power_plugged`; `pip install -r requirements.txt` installs it **on Windows**. There is **no built-in equivalent** here to mute Windows generic connect tones like macOS PowerChime.
+
+VMs, some desktops/tablets without a battery sensor, or odd drivers may not expose unplug/plug state; if so you see **one** hint on stderr.
+
+```powershell
+python slap_detector.py --backend mic --sound-on-ac-connect
+```
+
 Reveal the clip folder in Explorer anytime:
 
 ```powershell
@@ -62,16 +89,22 @@ python slap_detector.py --open-sounds-folder
 
 ## Freeze for Windows (.exe folder)
 
-Run on Windows from the repo root:
+**One-shot** from the cloned repo (creates `.venv`, installs deps, runs PyInstaller):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_and_build_windows.ps1
+```
+
+Output: **`dist/SlapYourMac/`** with **`SlapYourMac.exe`**. Zip the whole **`dist/SlapYourMac`** folder (not only the exe) so DLLs and resources ship together.
+
+Minimal manual variant from repo root:
 
 ```powershell
 pip install -r requirements.txt -r requirements-build.txt
 pyinstaller slap-your-mac-win.spec
 ```
 
-Output folder: **`dist/SlapYourMac/`** with **`SlapYourMac.exe`**. Zip the whole **`dist/SlapYourMac`** folder (not only the exe) so DLLs and resources ship together.
-
-**Verify** `SlapYourMac.exe`, mic access, and audio formats on actual Windows PCs.
+**Verify** `SlapYourMac.exe`, mic access, and audio formats on actual Windows PCs. For AC-connect sounds, test unplug/plug on **real notebook hardware**.
 
 ## Sound clips (no rebuild needed)
 
@@ -96,6 +129,8 @@ Requires Xcode Command Line Tools for code signing hints (PyInstaller still buil
 chmod +x scripts/build_mac_app.sh
 ./scripts/build_mac_app.sh
 ```
+
+If **`.venv`** is missing, the script creates **`python3`** (`PYTHON=/path/to/python3` overrides), installs **`requirements.txt`** and **`requirements-build.txt`**, then builds.
 
 Output: **`dist/SlapYourMac.app`**. Copy to **Applications**, double‑click to run.
 
@@ -134,4 +169,4 @@ Dock → **SlapYourMac** → **Quit** (Cmd+Q).
 
 ---
 
-ქართულად მოკლედ: macOS‑ზე **`dist/SlapYourMac.app`** კონტექტი ზემოთ; Windows‑ზე მიკროფონზე **`python slap_detector.py --backend mic`**; მიკროფონზე ნებართვა OS დიალოგით; შესვლაზე macOS‑ისთვის გამოიყენე `extras/` plist მაგალითი.
+ქართულად მოკლედ: მომხმარებელი იღებს **zip / .app ან სრულ `dist/SlapYourMac`** — Python არ სჭირდება; დეველოპერი **`scripts/build_mac_app.sh`** (მაკი), **`scripts/setup_and_build_windows.ps1`** (Windows). მაკზე **PowerChime** უხმო იკონტროლება; Windows AC კლიპი **psutil** გამოითვლება — რეალ ლეპტოპზე გამოსაცდელია. შესვლაზე macOS‑ისთვის — `extras/` plist მაგალითი.

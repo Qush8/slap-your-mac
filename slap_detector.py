@@ -45,15 +45,20 @@ Background IMU example:
 Background mic (no sudo):
     nohup …/python slap_detector.py --backend mic --sound ./one.m4a ./two.m4a >/tmp/slap.log 2>&1 &
 
-Also play when you plug the notebook back to wall power (battery → AC; macOS laptops).
+Also play when you plug the notebook back to wall power (battery → AC). macOS uses ``pmset``;
+Windows uses ``psutil`` (install from requirements on Windows).
 
-That mode **automatically turns off Apple's built-in charger ding** (PowerChime) so mostly your
-clips play. Opt out with ``--keep-apple-power-chime``. For slap-detection-only use, mute the ding once
+That mode on **macOS** **automatically turns off Apple's built-in charger ding** (PowerChime) so mostly your
+clips play. Opt out with ``--keep-apple-power-chime``. For slap-detection-only use on Mac, mute the ding once
 with ``--suppress-apple-power-chime`` without AC clip hooks::
 
     python slap_detector.py --sound-on-ac-connect
 
-Or run once::
+Windows::
+
+    python slap_detector.py --backend mic --sound-on-ac-connect
+
+Or on Mac, run ``defaults`` once to tweak PowerChime:
 
     defaults write com.apple.PowerChime ChimeOnNoHardware -bool true && killall PowerChime
 """
@@ -265,7 +270,30 @@ def _darwin_reads_ac_connected() -> bool | None:
     return _darwin_draws_ac_from_pmset(merged)
 
 
-def _mac_notebook_ac_change_monitor(
+def _win_reads_ac_via_psutil() -> bool | None:
+    """True if Windows reports external power, False on battery, None if unknown."""
+    try:
+        import psutil
+    except ImportError:
+        return None
+    batt = psutil.sensors_battery()
+    if batt is None:
+        return None
+    plugged = batt.power_plugged
+    if plugged is None:
+        return None
+    return bool(plugged)
+
+
+def _reads_external_ac_power() -> bool | None:
+    if sys.platform == "darwin":
+        return _darwin_reads_ac_connected()
+    if sys.platform == "win32":
+        return _win_reads_ac_via_psutil()
+    return None
+
+
+def _notebook_ac_change_monitor(
     picker: SoundPicker,
     cooldown: float,
     stop_event: threading.Event,
@@ -276,14 +304,25 @@ def _mac_notebook_ac_change_monitor(
     warned = False
 
     while not stop_event.wait(CHARGING_POLL_SEC):
-        current = _darwin_reads_ac_connected()
+        current = _reads_external_ac_power()
         if current is None:
             if not warned:
-                print(
-                    "AC-connect sound disabled: pmset battery state unavailable "
-                    "(desktop Mac or unexpected pmset output).",
-                    file=sys.stderr,
-                )
+                hint = ""
+                if sys.platform == "darwin":
+                    hint = (
+                        "AC-connect sound disabled: pmset battery state unavailable "
+                        "(desktop Mac or unexpected pmset output)."
+                    )
+                elif sys.platform == "win32":
+                    hint = (
+                        "AC-connect sound disabled: notebook battery/unplug signal unavailable "
+                        "(desktop, VM, drivers, or install psutil: pip install -r requirements.txt)."
+                    )
+                else:
+                    hint = (
+                        "AC-connect hook is not implemented on this OS (--sound-on-ac-connect)."
+                    )
+                print(hint, file=sys.stderr)
                 warned = True
             continue
         if last_plugged is False and current is True:
@@ -550,9 +589,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         dest="sound_on_ac_connect",
         help=(
-            "Extra (macOS laptop): also play clips when wall power reconnects "
-            "(battery → AC). Same picker/cooldown as slap triggers. Automatically mutes Apple's "
-            "charger ding unless --keep-apple-power-chime is set."
+            "Extra (notebook): also play clips when wall power reconnects (battery → AC). "
+            "macOS: pmset. Windows: psutil battery. Same picker/cooldown as slap triggers. "
+            "On macOS, automatically mutes Apple's charger ding unless --keep-apple-power-chime."
         ),
     )
     parser.add_argument(
@@ -844,12 +883,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    if args.sound_on_ac_connect and sys.platform != "darwin":
-        print(
-            "--sound-on-ac-connect is only implemented on macOS (pmset notebook power).",
-            file=sys.stderr,
-        )
-        return 1
+    if args.sound_on_ac_connect and sys.platform == "win32":
+        try:
+            import psutil  # noqa: F401
+        except ImportError:
+            print(
+                "--sound-on-ac-connect on Windows requires psutil. Install with:\n"
+                "  pip install -r requirements.txt",
+                file=sys.stderr,
+            )
+            return 1
 
     if args.suppress_apple_power_chime and sys.platform != "darwin":
         print(
@@ -884,10 +927,10 @@ def main(argv: list[str] | None = None) -> int:
             "Also playing when notebook AC power reconnects (--sound-on-ac-connect).\n"
         )
         threading.Thread(
-            target=_mac_notebook_ac_change_monitor,
+            target=_notebook_ac_change_monitor,
             args=(picker, args.cooldown, hook_stop),
             daemon=True,
-            name="MacACConnect",
+            name="NotebookACConnect",
         ).start()
 
     try:

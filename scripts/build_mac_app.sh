@@ -5,14 +5,16 @@ cd "$ROOT"
 
 export COPYFILE_DISABLE=1
 
-if [[ -f ".venv/bin/activate" ]]; then
-  # shellcheck source=/dev/null
-  source ".venv/bin/activate"
-else
-  echo "Create a venv first: python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"
-  exit 1
-fi
+PYTHON="${PYTHON:-python3}"
 
+if [[ ! -x ".venv/bin/python" ]]; then
+  echo "Creating .venv + installing runtime deps..."
+  "$PYTHON" -m venv .venv
+fi
+# shellcheck source=/dev/null
+source ".venv/bin/activate"
+
+pip install -q -r requirements.txt
 pip install -q -r requirements-build.txt
 rm -rf build dist
 pyinstaller slap-your-mac.spec
