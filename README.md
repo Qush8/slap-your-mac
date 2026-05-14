@@ -19,7 +19,25 @@ On a **notebook Mac**, you can **also** play the same clips when you plug in wal
 python slap_detector.py --sound-on-ac-connect
 ```
 
-Uses **`pmset -g batt`** to detect mains reconnect; desktops without a readable battery typically log a hint and skip. Same `--alternate-sounds`, `--cooldown`, and clip library behaviour as slap triggers.
+This **automatically mutes Apple's built-in charger ding** (PowerChime via `defaults`) so you mainly hear SlapYourMac. **Persisted**: you only see the explanatory message once; later launches stay quiet unless you revert below. Same **`--alternate-sounds`**, **`--cooldown`**, and clip-library rules as slap triggers.
+
+Keep Apple's ding alongside your clips:
+
+```bash
+python slap_detector.py --sound-on-ac-connect --keep-apple-power-chime
+```
+
+Mute Apple's ding **without** AC clip playback (mic/IMU only):
+
+```bash
+python slap_detector.py --suppress-apple-power-chime
+```
+
+Uses **`pmset -g batt`** for AC detection; desktops without notebook battery logging may skip hooks. Undo Apple ding only:
+
+```bash
+defaults write com.apple.PowerChime ChimeOnNoHardware -bool false
+```
 
 ## Run from source (Windows, microphone only)
 

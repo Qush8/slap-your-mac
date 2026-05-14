@@ -45,9 +45,17 @@ Background IMU example:
 Background mic (no sudo):
     nohup …/python slap_detector.py --backend mic --sound ./one.m4a ./two.m4a >/tmp/slap.log 2>&1 &
 
-Also play when you plug the notebook back to wall power (battery → AC; macOS laptops)::
+Also play when you plug the notebook back to wall power (battery → AC; macOS laptops).
+
+That mode **automatically turns off Apple's built-in charger ding** (PowerChime) so mostly your
+clips play. Opt out with ``--keep-apple-power-chime``. For slap-detection-only use, mute the ding once
+with ``--suppress-apple-power-chime`` without AC clip hooks::
 
     python slap_detector.py --sound-on-ac-connect
+
+Or run once::
+
+    defaults write com.apple.PowerChime ChimeOnNoHardware -bool true && killall PowerChime
 """
 
 from __future__ import annotations
@@ -286,6 +294,58 @@ def _mac_notebook_ac_change_monitor(
         last_plugged = current
 
 
+def apply_darwin_suppress_apple_power_chime() -> bool:
+    """
+    Mutes macOS plug-in ding from ``PowerChime`` via ``defaults`` (persists).
+
+    Undo: ``defaults write com.apple.PowerChime ChimeOnNoHardware -bool false && killall PowerChime``.
+    """
+    dc = shutil.which("defaults") or "/usr/bin/defaults"
+    chk = subprocess.run(
+        [dc, "read", "com.apple.PowerChime", "ChimeOnNoHardware"],
+        capture_output=True,
+        text=True,
+    )
+    prior_on = chk.returncode == 0 and chk.stdout.strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+    if not prior_on:
+        res = subprocess.run(
+            [
+                dc,
+                "write",
+                "com.apple.PowerChime",
+                "ChimeOnNoHardware",
+                "-bool",
+                "true",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode != 0:
+            msg = ((res.stderr or "") + (res.stdout or "")).strip() or f"exit {res.returncode}"
+            print(f"Could not mute Apple charger chime: {msg}", file=sys.stderr)
+            return False
+
+    ks = shutil.which("killall")
+    if ks:
+        subprocess.run(
+            [ks, "PowerChime"],
+            capture_output=True,
+            text=True,
+        )
+    if not prior_on:
+        print(
+            "Muted Apple charger ding (defaults com.apple.PowerChime → ChimeOnNoHardware=true).\n"
+            "Undo: defaults write com.apple.PowerChime ChimeOnNoHardware -bool false\n"
+            "     (restart PowerChime by unplugging AC or rebooting).\n"
+        )
+    return True
+
+
 def delta_g(prev: tuple[float, float, float], cur: tuple[float, float, float]) -> float:
     dx = cur[0] - prev[0]
     dy = cur[1] - prev[1]
@@ -491,7 +551,26 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         dest="sound_on_ac_connect",
         help=(
             "Extra (macOS laptop): also play clips when wall power reconnects "
-            "(was on battery → now AC). Same picker/cooldown as slap triggers."
+            "(battery → AC). Same picker/cooldown as slap triggers. Automatically mutes Apple's "
+            "charger ding unless --keep-apple-power-chime is set."
+        ),
+    )
+    parser.add_argument(
+        "--suppress-apple-power-chime",
+        action="store_true",
+        dest="suppress_apple_power_chime",
+        help=(
+            "(macOS) Mute Apple's built-in charger plug ding (PowerChime) via defaults. "
+            "Use without --sound-on-ac-connect if you only want slap sounds but not AC hooks. "
+            "With --sound-on-ac-connect this is redundant unless you used --keep-apple-power-chime."
+        ),
+    )
+    parser.add_argument(
+        "--keep-apple-power-chime",
+        action="store_true",
+        dest="keep_apple_power_chime",
+        help=(
+            "(macOS) With --sound-on-ac-connect, do not auto-mute Apple's charger ding."
         ),
     )
     return parser.parse_args(argv)
@@ -687,6 +766,31 @@ def resolve_backend(choice: str) -> str:
     return "mic"
 
 
+def effective_detection_backend(args: argparse.Namespace) -> str:
+    """IMU vs mic after ``--backend auto`` sudo rules; avoids ``UnboundLocalError`` on ``backend``."""
+    resolved = resolve_backend(args.backend)
+    if args.backend != "auto":
+        return resolved
+
+    if resolved == "imu":
+        uid_fn = getattr(os, "geteuid", None)
+        if callable(uid_fn) and uid_fn() != 0:
+            print(
+                "Built-in accelerometer detected, but IMU reads require root (sudo).\n"
+                "Running without sudo — using microphone fallback.\n"
+                "For sensor mode run the same command with sudo.\n"
+            )
+            return "mic"
+        print("Accelerometer detected — using IMU backend.\n")
+        return "imu"
+
+    print(
+        "No built-in accelerometer detected — using microphone fallback "
+        "(grant mic access when asked).\n"
+    )
+    return resolved
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv if argv is not None else sys.argv[1:])
 
@@ -747,28 +851,25 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    backend = resolve_backend(args.backend)
+    if args.suppress_apple_power_chime and sys.platform != "darwin":
+        print(
+            "--suppress-apple-power-chime works only on macOS.",
+            file=sys.stderr,
+        )
+        return 1
 
     if not playback_prereqs_ok():
         return 1
 
-    if args.backend == "auto":
-        if backend == "imu":
-            uid_fn = getattr(os, "geteuid", None)
-            if callable(uid_fn) and uid_fn() != 0:
-                print(
-                    "Built-in accelerometer detected, but IMU reads require root (sudo).\n"
-                    "Running without sudo — using microphone fallback.\n"
-                    "For sensor mode run the same command with sudo.\n"
-                )
-                backend = "mic"
-            elif backend == "imu":
-                print("Accelerometer detected — using IMU backend.\n")
-        else:
-            print(
-                "No built-in accelerometer detected — using microphone fallback "
-                "(grant mic access when asked).\n"
-            )
+    mute_apple_explicit = args.suppress_apple_power_chime
+    mute_apple_auto_ac = (
+        args.sound_on_ac_connect and not getattr(args, "keep_apple_power_chime", False)
+    )
+    if sys.platform == "darwin" and (mute_apple_explicit or mute_apple_auto_ac):
+        if not apply_darwin_suppress_apple_power_chime():
+            return 1
+
+    chosen_backend = effective_detection_backend(args)
 
     if args.sound is None:
         print(
@@ -790,7 +891,7 @@ def main(argv: list[str] | None = None) -> int:
         ).start()
 
     try:
-        if backend == "imu":
+        if chosen_backend == "imu":
             return run_imu(args, sound_paths, picker)
         return run_mic(args, sound_paths, picker)
     finally:
