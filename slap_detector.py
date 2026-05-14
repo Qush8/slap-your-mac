@@ -29,6 +29,9 @@ Default clips live under ``~/Library/Application Support/SlapYourMac/sound/``. O
 bundled samples are copied there; afterward add or delete ``.m4a`` / ``.mp3`` / ``.wav`` / … files
 in that folder (no reinstall). Omit ``--sound`` to use that library; pass ``--sound`` paths to override.
 
+The packaged ``.app`` opens that folder in Finder **once** on first launch so you can find it
+without Terminal (override with ``--no-auto-folder``, or anytime run ``--open-sounds-folder``).
+
 Example::
 
     python slap_detector.py --sound ./sound/a.m4a ./sound/b.m4a
@@ -81,6 +84,10 @@ def user_sound_library_dir() -> str:
 
 def defaults_installed_marker_path() -> str:
     return os.path.join(user_data_root(), ".defaults_installed")
+
+
+def auto_opened_sound_folder_marker_path() -> str:
+    return os.path.join(user_data_root(), ".auto_opened_sound_folder")
 
 
 def bundled_sound_dir() -> str:
@@ -158,6 +165,32 @@ def resolve_library_sound_paths() -> list[str]:
                 pass
 
     return sorted(paths)
+
+
+def open_sound_library_in_finder() -> None:
+    lib = user_sound_library_dir()
+    os.makedirs(lib, exist_ok=True)
+    opener = shutil.which("open")
+    if opener:
+        subprocess.run([opener, lib], check=False)
+    else:
+        print(lib, file=sys.stderr)
+
+
+def maybe_first_frozen_launch_open_sound_folder(args: argparse.Namespace) -> None:
+    if args.no_auto_folder or args.sound is not None:
+        return
+    if not getattr(sys, "frozen", False):
+        return
+    if os.path.isfile(auto_opened_sound_folder_marker_path()):
+        return
+    open_sound_library_in_finder()
+    try:
+        with open(auto_opened_sound_folder_marker_path(), "w", encoding="utf-8"):
+            pass
+    except OSError:
+        pass
+    print("Opened sound library in Finder (first bundled launch only).")
 
 
 def delta_g(prev: tuple[float, float, float], cur: tuple[float, float, float]) -> float:
@@ -278,6 +311,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         type=float,
         default=20.0,
         help="Mic read block length in ms (default: 20)",
+    )
+    parser.add_argument(
+        "--open-sounds-folder",
+        action="store_true",
+        help="Ensure clip library exists, reveal it in Finder, and exit (no detection).",
+    )
+    parser.add_argument(
+        "--no-auto-folder",
+        action="store_true",
+        help=(
+            "When running from a PyInstaller bundle, skip opening Finder on the first launch."
+        ),
     )
     return parser.parse_args(argv)
 
@@ -454,6 +499,12 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(signal, "SIGCHLD"):
         signal.signal(signal.SIGCHLD, signal.SIG_IGN)
 
+    if args.open_sounds_folder:
+        resolve_library_sound_paths()
+        open_sound_library_in_finder()
+        print(f"sound library folder:\n  {user_sound_library_dir()}\n")
+        return 0
+
     if args.sound is not None:
         candidates = [os.path.abspath(os.path.expanduser(p)) for p in args.sound]
     else:
@@ -515,6 +566,7 @@ def main(argv: list[str] | None = None) -> int:
             "sound library folder (add/remove .m4a, .mp3, … clips anytime):\n"
             f"  {user_sound_library_dir()}\n"
         )
+        maybe_first_frozen_launch_open_sound_folder(args)
 
     if backend == "imu":
         return run_imu(args, sound_paths, picker, afplay)

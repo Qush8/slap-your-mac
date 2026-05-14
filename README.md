@@ -23,6 +23,10 @@ Tracks are loaded from **`~/Library/Application Support/SlapYourMac/sound/`** (c
 
 Override with explicit paths: `python slap_detector.py --sound /path/a.m4a /path/b.m4a`
 
+**Open** the clip folder in Finder **without “Go → Go to Folder…”** — run `python slap_detector.py --open-sounds-folder` (seeds demos if empty, then opens the folder).
+
+The **`SlapYourMac.app`** opens that folder automatically **once** on first launch so you notice where clips live; add `--no-auto-folder` when launching from Terminal if you want to skip that.
+
 ## Build the macOS app (double‑click, no Terminal)
 
 Requires Xcode Command Line Tools for code signing hints (PyInstaller still builds without your own signing).

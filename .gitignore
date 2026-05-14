@@ -6,3 +6,6 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+
+# Accidental PyInstaller copy at repo root (real output is dist/SlapYourMac.app)
+/SlapYourMac.app
