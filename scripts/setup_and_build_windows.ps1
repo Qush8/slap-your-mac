@@ -25,20 +25,21 @@ if (-not (Test-Path $venvPython)) {
 
 & $venvPython -m pip install -q --upgrade pip
 & $venvPip install -q -r requirements.txt -r requirements-build.txt
+& $venvPip install -q pyinstaller
 
-Write-Host "Building Windows folder with PyInstaller..."
+Write-Host "Building Windows one-file exe with PyInstaller..."
 & $venvPython -m PyInstaller slap-your-mac-win.spec
 
-$distFolder = Join-Path $Root "dist\SlapYourMac"
+$distExe = Join-Path $Root "dist\SlapYourMac.exe"
 $releases = Join-Path $Root "releases"
 New-Item -ItemType Directory -Force -Path $releases | Out-Null
 $zipOut = Join-Path $releases "SlapYourMac-windows.zip"
 if (Test-Path $zipOut) {
     Remove-Item -Force $zipOut
 }
-Compress-Archive -Path $distFolder -DestinationPath $zipOut -Force
+Compress-Archive -Path $distExe -DestinationPath $zipOut -Force
 
 Write-Host ""
-Write-Host "Done: $distFolder\SlapYourMac.exe"
+Write-Host "Done: $distExe"
 Write-Host "Friend-ready zip: $zipOut"
-Write-Host "(Share the zip; inside it is the whole SlapYourMac folder, not only the .exe.)"
+Write-Host "(Share the zip; inside it is SlapYourMac.exe — one-file windowed build.)"

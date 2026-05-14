@@ -15,7 +15,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           fetch-tags: true
@@ -23,7 +23,7 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: '3.11'
 
       - name: Install deps and PyInstaller build
         shell: pwsh
@@ -32,6 +32,7 @@ jobs:
           .\.venv\Scripts\Activate.ps1
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-build.txt
+          pip install pyinstaller
           python -m PyInstaller slap-your-mac-win.spec
 
       - name: Create releases/SlapYourMac-windows.zip
@@ -40,7 +41,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path releases | Out-Null
           $zip = "releases\SlapYourMac-windows.zip"
           if (Test-Path $zip) { Remove-Item $zip -Force }
-          Compress-Archive -Path "dist\SlapYourMac" -DestinationPath $zip -Force
+          Compress-Archive -Path "dist\SlapYourMac.exe" -DestinationPath $zip -Force
 
       - uses: actions/upload-artifact@v7
         with:

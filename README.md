@@ -6,7 +6,7 @@ Play sounds when the laptop is tapped — **accelerometer mode on compatible mac
 
 | Scenario | Goal | Typical steps |
 |---------|------|----------------|
-| **End user** (frozen app) | No Python tools | Receive **`SlapYourMac.app`** (macOS) or a **zip** of **`dist/SlapYourMac`** (Windows). First run: microphone permission when asked; bundled clips live in app support folders (see below). |
+| **End user** (frozen app) | No Python tools | Receive **`SlapYourMac.app`** (macOS) or a **zip** containing **`SlapYourMac.exe`** (Windows one-file build). First run: microphone permission when asked; bundled clips live in app support folders (see below). |
 | **Developer** (build locally) | Reproducible venv + PyInstaller | macOS: **`scripts/build_mac_app.sh`**; Windows: **`scripts/setup_and_build_windows.ps1`**. |
 
 **Silent “Next–Next installer” installers** (MSI, Inno Setup, signed macOS `.pkg`) are **not part of this repo by default**. They’re possible as a separate packaging step later (including codesign/notarization on Mac).
@@ -17,7 +17,7 @@ The repo stays **without** bulky zips in git history — instead **GitHub Action
 
 1. Open your repo → **Actions** → workflow **Build Windows zip** → **Run workflow** (manual run), or push a Git tag **`v1.0.0`** etc. so the workflow **also attaches** `SlapYourMac-windows.zip` to a **GitHub Release** (permalink for friends — WeTransfer‑style „one stable link”).
 2. When the job finishes, open **Build Windows zip → latest run → Artifacts** and download **`SlapYourMac-windows.zip`**, or grab it from **Releases** if you tagged.
-3. Recipients unzip, open **`SlapYourMac/SlapYourMac.exe`** (whole folder stays together).
+3. Recipients unzip and run **`SlapYourMac.exe`** (single windowed executable).
 
 ## Run from source (macOS)
 
@@ -28,7 +28,7 @@ pip install -r requirements.txt
 python slap_detector.py
 ```
 
-macOS skips the **`playsound`** wheel (playback uses **`afplay`**). That avoids install failures on very new Python (e.g. 3.14) where `playsound` often does not build.
+macOS skips **`pygame`** in **`requirements.txt`** (playback uses **`afplay`**). Windows and other non-macOS platforms use **`pygame.mixer`** for playback.
 
 On a **notebook Mac**, you can **also** play the same clips when you plug in wall power (battery → mains). Detection uses **`pmset -g batt`**. **`--suppress-apple-power-chime`**, **`--keep-apple-power-chime`**, and **PowerChime** muting apply **only on macOS**.
 
@@ -69,7 +69,7 @@ python slap_detector.py --backend mic
 
 Grant **microphone** access when prompted. The script uses Windows’ **default recording device** — select the built‑in mic or a USB headset in **Settings → System → Sound → Input**.
 
-Playback on Windows goes through **`playsound`** (often fine for `.mp3`/`.wav`). If `.m4a` fails or stutters, try `.mp3` or `.wav` clips instead.
+Playback on Windows goes through **`pygame.mixer`** (SDL_mixer — typically **`.ogg`**, **`.wav`**, **`.mp3`** depending on build). **`.m4a` / AAC** may not decode; if a clip is silent or errors, convert it to **`.ogg`**, **`.wav`**, or **`.mp3`** and put it in the library folder.
 
 ### Charger connect sound (battery → AC) on Windows
 
@@ -87,20 +87,21 @@ Reveal the clip folder in Explorer anytime:
 python slap_detector.py --open-sounds-folder
 ```
 
-## Freeze for Windows (.exe folder)
+## Freeze for Windows (one-file `.exe`)
 
-**One-shot** from the cloned repo (creates `.venv`, installs deps, runs PyInstaller):
+**One-shot** from the cloned repo (creates `.venv`, installs deps, installs PyInstaller, runs PyInstaller):
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup_and_build_windows.ps1
 ```
 
-Output: **`dist/SlapYourMac/`** with **`SlapYourMac.exe`**. Zip the whole **`dist/SlapYourMac`** folder (not only the exe) so DLLs and resources ship together.
+Output: **`dist/SlapYourMac.exe`** (windowed, one-file — dependencies and bundled `sound/` are embedded). The script also writes **`releases/SlapYourMac-windows.zip`** containing that exe.
 
 Minimal manual variant from repo root:
 
 ```powershell
 pip install -r requirements.txt -r requirements-build.txt
+pip install pyinstaller
 pyinstaller slap-your-mac-win.spec
 ```
 
@@ -170,4 +171,4 @@ Dock → **SlapYourMac** → **Quit** (Cmd+Q).
 
 ---
 
-ქართულად მოკლედ: მომხმარებელი იღებს **zip / .app ან სრულ `dist/SlapYourMac`** — Python არ სჭირდება; დეველოპერი **`scripts/build_mac_app.sh`** (მაკი), **`scripts/setup_and_build_windows.ps1`** (Windows). მაკზე **PowerChime** უხმო იკონტროლება; Windows AC კლიპი **psutil** გამოითვლება — რეალ ლეპტოპზე გამოსაცდელია. შესვლაზე macOS‑ისთვის — `extras/` plist მაგალითი.
+ქართულად მოკლედ: მომხმარებელი იღებს **zip / .app ან `SlapYourMac.exe`** — Python არ სჭირდება; დეველოპერი **`scripts/build_mac_app.sh`** (მაკი), **`scripts/setup_and_build_windows.ps1`** (Windows). მაკზე **PowerChime** უხმო იკონტროლება; Windows AC კლიპი **psutil** გამოითვლება — რეალ ლეპტოპზე გამოსაცდელია. შესვლაზე macOS‑ისთვის — `extras/` plist მაგალითი.

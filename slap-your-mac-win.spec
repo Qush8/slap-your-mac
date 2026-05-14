@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller — Windows microphone build (bundled sound/)
+# PyInstaller — Windows one-file windowed build (bundled sound/)
 # Run on Windows (with venv + pyinstaller): pyinstaller slap-your-mac-win.spec
 
 block_cipher = None
@@ -9,8 +9,8 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ("sound/mhhh.m4a", "sound"),
-        ("sound/ahShort.m4a", "sound"),
+        ("sound/mhhh.wav", "sound"),
+        ("sound/ahShort.wav", "sound"),
     ],
     hiddenimports=[
         "numpy",
@@ -18,7 +18,9 @@ a = Analysis(
         "sounddevice",
         "_sounddevice",
         "_sounddevice_data",
-        "playsound",
+        "pygame",
+        "pygame.mixer",
+        "pygame.mixer_music",
         "psutil",
         "cffi",
         "_cffi_backend",
@@ -35,28 +37,21 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
     [],
-    exclude_binaries=True,
     name="SlapYourMac",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
+    upx_exclude=[],
+    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    name="SlapYourMac",
 )

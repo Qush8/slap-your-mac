@@ -9,7 +9,7 @@ Two backends:
 2) Microphone — loud transient from a slap/knock picked up by the built-in mic (or default
    input). Works on **most Macs**, including MacBook Pro M1 13-inch (2020); no sudo, but macOS will ask for microphone access the first time.
    Built-in speakers can re-trigger the mic while a clip plays; the script ignores mic hits until
-   playback finishes (``afplay`` on macOS, threaded ``playsound`` elsewhere; use headphones if you
+   playback finishes (``afplay`` on macOS, threaded ``pygame.mixer`` elsewhere; use headphones if you
    still hear double-fires).
 
 Run with ``--backend auto`` (default): use the built-in accelerometer when ``macimu`` detects it and
@@ -78,6 +78,9 @@ import threading
 import time
 from typing import Protocol
 
+# Non-macOS playback (pygame.mixer.music); serialize access — music stream is single-channel.
+_pygame_mixer_lock = threading.Lock()
+_pygame_mixer_initialized = False
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -93,7 +96,7 @@ def _base_dir() -> str:
 
 
 APP_NAME = "SlapYourMac"
-SOUND_EXTENSIONS = (".m4a", ".mp3", ".wav", ".aiff", ".aif", ".caf")
+SOUND_EXTENSIONS = (".m4a", ".mp3", ".wav", ".aiff", ".aif", ".caf", ".ogg")
 
 
 def user_data_root() -> str:
@@ -407,17 +410,27 @@ class _AfplayPlayback:
         return self._proc.poll()
 
 
-class _PlaysoundPlayback:
+class _PygamePlayback:
     __slots__ = ("_thread", "_exc")
 
     def __init__(self, sound_path: str) -> None:
         self._exc: BaseException | None = None
+        path = os.path.normpath(os.path.abspath(sound_path))
 
         def _run() -> None:
+            global _pygame_mixer_initialized
             try:
-                from playsound import playsound
+                import pygame
 
-                playsound(sound_path, block=True)
+                with _pygame_mixer_lock:
+                    if not _pygame_mixer_initialized:
+                        pygame.mixer.init(frequency=44_100, size=-16, channels=2, buffer=512)
+                        _pygame_mixer_initialized = True
+                    pygame.mixer.music.stop()
+                    pygame.mixer.music.load(path)
+                    pygame.mixer.music.play()
+                    while pygame.mixer.music.get_busy():
+                        pygame.time.wait(50)
             except BaseException as err:
                 self._exc = err
 
@@ -431,7 +444,7 @@ class _PlaysoundPlayback:
 
 
 def start_playback(sound_path: str) -> PlaybackPollable:
-    """macOS: ``afplay`` subprocess. Else: ``playsound`` in a background thread."""
+    """macOS: ``afplay`` subprocess. Else: ``pygame.mixer.music`` in a background thread."""
     if sys.platform == "darwin":
         exe = shutil.which("afplay")
         if exe is None:
@@ -444,7 +457,7 @@ def start_playback(sound_path: str) -> PlaybackPollable:
             start_new_session=True,
         )
         return _AfplayPlayback(proc)
-    return _PlaysoundPlayback(sound_path)
+    return _PygamePlayback(sound_path)
 
 
 def playback_prereqs_ok() -> bool:
@@ -455,14 +468,23 @@ def playback_prereqs_ok() -> bool:
             return False
         return True
     try:
-        import playsound  # noqa: F401
+        import pygame  # noqa: F401
     except ImportError:
         print(
-            "playsound required for playback on this OS. Install with:\n"
+            "pygame required for playback on this OS. Install with:\n"
             "  pip install -r requirements.txt",
             file=sys.stderr,
         )
         return False
+    try:
+        pygame.mixer.init(frequency=44_100, size=-16, channels=2, buffer=512)
+    except pygame.error as err:
+        print(f"pygame.mixer failed: {err}", file=sys.stderr)
+        return False
+    pygame.mixer.quit()
+    global _pygame_mixer_initialized
+    with _pygame_mixer_lock:
+        _pygame_mixer_initialized = False
     return True
 
 
