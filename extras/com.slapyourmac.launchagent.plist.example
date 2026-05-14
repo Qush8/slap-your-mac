@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Launch at login (user session).
+
+  1. Copy this file to:
+       ~/Library/LaunchAgents/com.slapyourmac.detector.plist
+  2. Edit ProgramArguments: set the path to YOUR SlapYourMac.app (often /Applications).
+  3. Load once:
+       launchctl load ~/Library/LaunchAgents/com.slapyourmac.detector.plist
+
+  Unload:
+       launchctl unload ~/Library/LaunchAgents/com.slapyourmac.detector.plist
+
+  Uses `open -a` so macOS treats it like a normal GUI app (microphone prompt tied to the bundle).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>dev.slapyourmac.detector</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/open</string>
+        <string>-a</string>
+        <string>/Applications/SlapYourMac.app</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
