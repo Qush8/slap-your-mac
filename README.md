@@ -1,8 +1,8 @@
 # SlapYourMac
 
-Play bundled sounds when the laptop is tapped. Uses the built-in accelerometer when available (`macimu`, requires `sudo`), otherwise the microphone.
+Play sounds when the laptop is tapped — **accelerometer mode on compatible macOS notebooks** (`macimu`, typically needs `sudo`) or **microphone mode** (works on macOS **and Windows**).
 
-## Run from source
+## Run from source (macOS)
 
 ```bash
 python3 -m venv .venv
@@ -11,21 +11,64 @@ pip install -r requirements.txt
 python slap_detector.py
 ```
 
+macOS skips the **`playsound`** wheel (playback uses **`afplay`**). That avoids install failures on very new Python (e.g. 3.14) where `playsound` often does not build.
+
+On a **notebook Mac**, you can **also** play the same clips when you plug in wall power (battery → mains):
+
+```bash
+python slap_detector.py --sound-on-ac-connect
+```
+
+Uses **`pmset -g batt`** to detect mains reconnect; desktops without a readable battery typically log a hint and skip. Same `--alternate-sounds`, `--cooldown`, and clip library behaviour as slap triggers.
+
+## Run from source (Windows, microphone only)
+
+Use **Python 3.10–3.13** when possible (easier installs for playback dependencies).
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python slap_detector.py --backend mic
+```
+
+Grant **microphone** access when prompted. The script uses Windows’ **default recording device** — select the built‑in mic or a USB headset in **Settings → System → Sound → Input**.
+
+Playback on Windows goes through **`playsound`** (often fine for `.mp3`/`.wav`). If `.m4a` fails or stutters, try `.mp3` or `.wav` clips instead.
+
+Reveal the clip folder in Explorer anytime:
+
+```powershell
+python slap_detector.py --open-sounds-folder
+```
+
+## Freeze for Windows (.exe folder)
+
+Run on Windows from the repo root:
+
+```powershell
+pip install -r requirements.txt -r requirements-build.txt
+pyinstaller slap-your-mac-win.spec
+```
+
+Output folder: **`dist/SlapYourMac/`** with **`SlapYourMac.exe`**. Zip the whole **`dist/SlapYourMac`** folder (not only the exe) so DLLs and resources ship together.
+
+**Verify** `SlapYourMac.exe`, mic access, and audio formats on actual Windows PCs.
+
 ## Sound clips (no rebuild needed)
 
-Tracks are loaded from **`~/Library/Application Support/SlapYourMac/sound/`** (created on first launch).
+On **macOS**, tracks load from **`~/Library/Application Support/SlapYourMac/sound/`** (created on first launch).  
+On **Windows**, from **`%LOCALAPPDATA%\SlapYourMac\sound\`** (e.g. `C:\Users\You\AppData\Local\SlapYourMac\sound\`).
 
 1. Run the app **once** — bundled demo clips are copied there if the folder is empty.
 2. Add or delete **`.m4a`**, **`.mp3`**, **`.wav`**, **`.aiff`**, **`.aif`**, or **`.caf`** files and **restart** the app.
-3. To get the bundled demos again after removing everything: delete  
-   **`~/Library/Application Support/SlapYourMac/.defaults_installed`**  
-   and clear clips in `sound/` (or remove the clips only and add your own), then launch once with an empty library to re-seed.
+3. To get the bundled demos again after removing everything: delete the marker **`SlapYourMac/.defaults_installed`** under your clips root (paths above), clear clips in `sound/`, then launch once with an empty library to re-seed.
 
 Override with explicit paths: `python slap_detector.py --sound /path/a.m4a /path/b.m4a`
 
-**Open** the clip folder in Finder **without “Go → Go to Folder…”** — run `python slap_detector.py --open-sounds-folder` (seeds demos if empty, then opens the folder).
+**Open** the clip folder easily — run `python slap_detector.py --open-sounds-folder` (seeds demos if empty).
 
-The **`SlapYourMac.app`** opens that folder automatically **once** on first launch so you notice where clips live; add `--no-auto-folder` when launching from Terminal if you want to skip that.
+The bundled **macOS `.app`** (or frozen **Windows `.exe`**) opens that clip folder automatically **once** on first launch; use `--no-auto-folder` when launching from a shell to skip it.
 
 ## Build the macOS app (double‑click, no Terminal)
 
@@ -73,4 +116,4 @@ Dock → **SlapYourMac** → **Quit** (Cmd+Q).
 
 ---
 
-ქართულად მოკლედ: წყაროდან ან **`dist/SlapYourMac.app`** ორმაგი წკაპით; მიკროფონზე ნებართვა macOS დიალოგით; შესვლაზე ავტოსტარტისთვის გამოიყენე `extras/` plist მაგალითი.
+ქართულად მოკლედ: macOS‑ზე **`dist/SlapYourMac.app`** კონტექტი ზემოთ; Windows‑ზე მიკროფონზე **`python slap_detector.py --backend mic`**; მიკროფონზე ნებართვა OS დიალოგით; შესვლაზე macOS‑ისთვის გამოიყენე `extras/` plist მაგალითი.

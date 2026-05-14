@@ -9,7 +9,8 @@ Two backends:
 2) Microphone — loud transient from a slap/knock picked up by the built-in mic (or default
    input). Works on **most Macs**, including MacBook Pro M1 13-inch (2020); no sudo, but macOS will ask for microphone access the first time.
    Built-in speakers can re-trigger the mic while a clip plays; the script ignores mic hits until
-   ``afplay`` finishes (use headphones if you still hear double-fires).
+   playback finishes (``afplay`` on macOS, threaded ``playsound`` elsewhere; use headphones if you
+   still hear double-fires).
 
 Run with ``--backend auto`` (default): use the built-in accelerometer when ``macimu`` detects it and
 you run **with sudo**; if there is no sensor, **or** the sensor exists but you did not use sudo,
@@ -25,12 +26,14 @@ Sensitivity:
     IMU: tune ``--threshold`` (Δg between samples).
     Mic: tune ``--mic-threshold`` (0..1; **higher** = only **louder** taps/slaps trigger).
 
-Default clips live under ``~/Library/Application Support/SlapYourMac/sound/``. On first run the
-bundled samples are copied there; afterward add or delete ``.m4a`` / ``.mp3`` / ``.wav`` / … files
-in that folder (no reinstall). Omit ``--sound`` to use that library; pass ``--sound`` paths to override.
+Default clips live in a per‑OS clip library folder (created on first run): on macOS
+``~/Library/Application Support/SlapYourMac/sound/``; on Windows
+``%LOCALAPPDATA%\\SlapYourMac\\sound\\``. Bundled samples copy there once; afterward add or delete
+``.m4a`` / ``.mp3`` / ``.wav`` / … clips (no reinstall). Omit ``--sound`` to use that library.
 
-The packaged ``.app`` opens that folder in Finder **once** on first launch so you can find it
-without Terminal (override with ``--no-auto-folder``, or anytime run ``--open-sounds-folder``).
+The packaged bundle opens that folder in the file browser **once** on first macOS launch
+(override ``--no-auto-folder``, or anytime ``--open-sounds-folder``). Windows: ``--open-sounds-folder``
+opens Explorer.
 
 Example::
 
@@ -41,6 +44,10 @@ Background IMU example:
 
 Background mic (no sudo):
     nohup …/python slap_detector.py --backend mic --sound ./one.m4a ./two.m4a >/tmp/slap.log 2>&1 &
+
+Also play when you plug the notebook back to wall power (battery → AC; macOS laptops)::
+
+    python slap_detector.py --sound-on-ac-connect
 """
 
 from __future__ import annotations
@@ -49,11 +56,14 @@ import argparse
 import math
 import os
 import random
+import re
 import signal
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from typing import Protocol
 
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -74,8 +84,17 @@ SOUND_EXTENSIONS = (".m4a", ".mp3", ".wav", ".aiff", ".aif", ".caf")
 
 
 def user_data_root() -> str:
-    base = os.path.expanduser("~/Library/Application Support")
-    return os.path.join(base, APP_NAME)
+    if sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support")
+        return os.path.join(base, APP_NAME)
+    if sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA")
+        if local:
+            return os.path.join(local, APP_NAME)
+        profile = os.environ.get("USERPROFILE", os.path.expanduser("~"))
+        return os.path.join(profile, "AppData", "Local", APP_NAME)
+    xdg = os.environ.get("XDG_DATA_HOME", os.path.join(os.path.expanduser("~"), ".local", "share"))
+    return os.path.join(xdg, APP_NAME)
 
 
 def user_sound_library_dir() -> str:
@@ -133,7 +152,7 @@ def _copy_bundled_samples_into_user_library() -> int:
 
 def resolve_library_sound_paths() -> list[str]:
     """
-    Use ``~/Library/Application Support/SlapYourMac/sound/``.
+    Resolve clips under :func:`user_sound_library_dir` (per‑OS Application Support style path).
 
     - If clips are already there: use them (sorted).
     - If empty and bundled defaults never installed: copy bundled samples, create marker file.
@@ -167,14 +186,26 @@ def resolve_library_sound_paths() -> list[str]:
     return sorted(paths)
 
 
-def open_sound_library_in_finder() -> None:
+def open_sound_library_folder() -> None:
     lib = user_sound_library_dir()
     os.makedirs(lib, exist_ok=True)
-    opener = shutil.which("open")
-    if opener:
-        subprocess.run([opener, lib], check=False)
+    if sys.platform == "darwin":
+        opener = shutil.which("open")
+        if opener:
+            subprocess.run([opener, lib], check=False)
+        else:
+            print(lib, file=sys.stderr)
+    elif sys.platform == "win32":
+        try:
+            os.startfile(lib)  # type: ignore[attr-defined]
+        except OSError:
+            subprocess.run(["explorer", os.path.normpath(lib)], check=False)
     else:
-        print(lib, file=sys.stderr)
+        xdg = shutil.which("xdg-open")
+        if xdg:
+            subprocess.run([xdg, lib], check=False)
+        else:
+            print(lib, file=sys.stderr)
 
 
 def maybe_first_frozen_launch_open_sound_folder(args: argparse.Namespace) -> None:
@@ -184,13 +215,75 @@ def maybe_first_frozen_launch_open_sound_folder(args: argparse.Namespace) -> Non
         return
     if os.path.isfile(auto_opened_sound_folder_marker_path()):
         return
-    open_sound_library_in_finder()
+    open_sound_library_folder()
     try:
         with open(auto_opened_sound_folder_marker_path(), "w", encoding="utf-8"):
             pass
     except OSError:
         pass
-    print("Opened sound library in Finder (first bundled launch only).")
+    print("Opened sound library folder (first bundled launch only).")
+
+
+CHARGING_POLL_SEC = 0.45
+
+
+def _darwin_draws_ac_from_pmset(text: str) -> bool | None:
+    """True if notebook reports drawing from mains, False from battery."""
+    match = re.search(r"(?i)(?:Now )?drawing from '([^']+)'", text)
+    if match is None:
+        return None
+    label = match.group(1).strip().lower()
+    if "ac power" == label or label.startswith("ac "):
+        return True
+    if "battery power" == label or label.startswith("battery "):
+        return False
+    if label == "ac":
+        return True
+    return None
+
+
+def _darwin_reads_ac_connected() -> bool | None:
+    try:
+        out = subprocess.run(
+            ["/usr/bin/pmset", "-g", "batt"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        merged = (out.stdout or "") + (out.stderr or "")
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return _darwin_draws_ac_from_pmset(merged)
+
+
+def _mac_notebook_ac_change_monitor(
+    picker: SoundPicker,
+    cooldown: float,
+    stop_event: threading.Event,
+) -> None:
+    """Play on transition battery → mains; uses same picker/cooldown as slap detection."""
+    last_plugged: bool | None = None
+    last_fire = -cooldown
+    warned = False
+
+    while not stop_event.wait(CHARGING_POLL_SEC):
+        current = _darwin_reads_ac_connected()
+        if current is None:
+            if not warned:
+                print(
+                    "AC-connect sound disabled: pmset battery state unavailable "
+                    "(desktop Mac or unexpected pmset output).",
+                    file=sys.stderr,
+                )
+                warned = True
+            continue
+        if last_plugged is False and current is True:
+            now = time.monotonic()
+            if (now - last_fire) >= cooldown:
+                last_fire = now
+                start_playback(picker.pick())
+        last_plugged = current
 
 
 def delta_g(prev: tuple[float, float, float], cur: tuple[float, float, float]) -> float:
@@ -200,15 +293,78 @@ def delta_g(prev: tuple[float, float, float], cur: tuple[float, float, float]) -
     return math.sqrt(dx * dx + dy * dy + dz * dz)
 
 
-def trigger_play(sound_path: str, afplay: str) -> subprocess.Popen:
-    """Decode/play via macOS ``afplay`` — supports common formats including ``.m4a``, ``.mp3``, ``.caf``, ``.aiff``, ``.wav``."""
-    return subprocess.Popen(
-        [afplay, sound_path],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+class PlaybackPollable(Protocol):
+    def poll(self) -> int | None:
+        ...
+
+
+class _AfplayPlayback:
+    __slots__ = ("_proc",)
+
+    def __init__(self, proc: subprocess.Popen) -> None:
+        self._proc = proc
+
+    def poll(self) -> int | None:
+        return self._proc.poll()
+
+
+class _PlaysoundPlayback:
+    __slots__ = ("_thread", "_exc")
+
+    def __init__(self, sound_path: str) -> None:
+        self._exc: BaseException | None = None
+
+        def _run() -> None:
+            try:
+                from playsound import playsound
+
+                playsound(sound_path, block=True)
+            except BaseException as err:
+                self._exc = err
+
+        self._thread = threading.Thread(target=_run, daemon=True)
+        self._thread.start()
+
+    def poll(self) -> int | None:
+        if self._thread.is_alive():
+            return None
+        return 1 if self._exc is not None else 0
+
+
+def start_playback(sound_path: str) -> PlaybackPollable:
+    """macOS: ``afplay`` subprocess. Else: ``playsound`` in a background thread."""
+    if sys.platform == "darwin":
+        exe = shutil.which("afplay")
+        if exe is None:
+            raise RuntimeError("afplay not found (required on macOS for playback)")
+        proc = subprocess.Popen(
+            [exe, sound_path],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return _AfplayPlayback(proc)
+    return _PlaysoundPlayback(sound_path)
+
+
+def playback_prereqs_ok() -> bool:
+    """Validate external playback deps before blocking on ``main`` loops."""
+    if sys.platform == "darwin":
+        if shutil.which("afplay") is None:
+            print("afplay not found (expected on macOS).", file=sys.stderr)
+            return False
+        return True
+    try:
+        import playsound  # noqa: F401
+    except ImportError:
+        print(
+            "playsound required for playback on this OS. Install with:\n"
+            "  pip install -r requirements.txt",
+            file=sys.stderr,
+        )
+        return False
+    return True
 
 
 class SoundPicker:
@@ -241,7 +397,10 @@ def imu_available() -> bool:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Play a sound when the laptop is slapped (accelerometer or microphone)."
+        description=(
+            "Play a sound when the laptop is slapped (notebook accelerometer on macOS, "
+            "or microphone anywhere)."
+        )
     )
     parser.add_argument(
         "--backend",
@@ -258,10 +417,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         metavar="PATH",
         help=(
-            "Override automatic library with explicit paths (macOS afplay formats). "
-            "When omitted, sounds are loaded from ~/Library/Application Support/"
+            "Override automatic clip library with explicit audio paths (.m4a, .wav, …). "
+            "When omitted, clips load from macOS ~/Library/Application Support/"
             + APP_NAME
-            + "/sound/ — add or remove clips there."
+            + "/sound/ or Windows %%LOCALAPPDATA%%\\\\"
+            + APP_NAME
+            + "\\\\sound\\\\ — edit files there anytime."
         ),
     )
     parser.add_argument(
@@ -315,13 +476,22 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--open-sounds-folder",
         action="store_true",
-        help="Ensure clip library exists, reveal it in Finder, and exit (no detection).",
+        help="Ensure clip library exists, open it in the file browser, and exit (no detection).",
     )
     parser.add_argument(
         "--no-auto-folder",
         action="store_true",
         help=(
-            "When running from a PyInstaller bundle, skip opening Finder on the first launch."
+            "When running from a frozen executable, skip opening the clip folder on the first launch."
+        ),
+    )
+    parser.add_argument(
+        "--sound-on-ac-connect",
+        action="store_true",
+        dest="sound_on_ac_connect",
+        help=(
+            "Extra (macOS laptop): also play clips when wall power reconnects "
+            "(was on battery → now AC). Same picker/cooldown as slap triggers."
         ),
     )
     return parser.parse_args(argv)
@@ -331,7 +501,6 @@ def run_imu(
     args: argparse.Namespace,
     sound_paths: list[str],
     picker: SoundPicker,
-    afplay: str,
 ) -> int:
     try:
         from macimu import IMU
@@ -387,7 +556,7 @@ def run_imu(
                 now = time.monotonic()
                 if dg > args.threshold and (now - last_trigger) >= args.cooldown:
                     last_trigger = now
-                    trigger_play(picker.pick(), afplay)
+                    start_playback(picker.pick())
 
     except PermissionError:
         print("Permission denied — IMU mode needs root. Example:\n", file=sys.stderr)
@@ -405,7 +574,6 @@ def run_mic(
     args: argparse.Namespace,
     sound_paths: list[str],
     picker: SoundPicker,
-    afplay: str,
 ) -> int:
     try:
         import numpy as np
@@ -430,17 +598,32 @@ def run_mic(
 
     sound_mode = "alternate" if args.alternate_sounds else "random"
     listed = "\n".join(f"  {p}" for p in sound_paths)
+    if sys.platform == "darwin":
+        mic_hint = (
+            "Allow microphone access if macOS prompts. "
+            "Raise --mic-threshold if ambient noise/typing triggers; lower if slaps are missed.\n"
+        )
+    elif sys.platform == "win32":
+        mic_hint = (
+            "Allow microphone access if Windows prompts (Settings → Privacy → Microphone). "
+            "Raise --mic-threshold if ambient noise/typing triggers; lower if slaps are missed.\n"
+        )
+    else:
+        mic_hint = (
+            "Allow microphone access if your OS prompts. "
+            "Raise --mic-threshold if ambient noise/typing triggers; lower if slaps are missed.\n"
+        )
+
     print(
         f"backend=mic  mic_threshold={args.mic_threshold:g}  cooldown={args.cooldown:g} s  "
         f"mic_rate={args.mic_rate} Hz  block≈{block} samples\n"
         f"sounds ({sound_mode}, {len(sound_paths)} file(s)):\n{listed}\n"
-        "Allow microphone access if macOS prompts. "
-        "Raise --mic-threshold if ambient noise/typing triggers; lower if slaps are missed.\n"
+        f"{mic_hint}"
         "While a clip is playing, mic triggers are ignored (avoids speaker→mic feedback loops)."
     )
 
     last_trigger = -args.cooldown
-    playback_proc: subprocess.Popen | None = None
+    playback: PlaybackPollable | None = None
     try:
         with sd.InputStream(
             samplerate=args.mic_rate,
@@ -457,24 +640,35 @@ def run_mic(
                 if samples.size == 0:
                     continue
 
-                if playback_proc is not None:
-                    if playback_proc.poll() is None:
+                if playback is not None:
+                    if playback.poll() is None:
                         continue
-                    playback_proc = None
+                    playback = None
 
                 peak = float(np.max(np.abs(samples)))
 
                 now = time.monotonic()
                 if peak >= args.mic_threshold and (now - last_trigger) >= args.cooldown:
                     last_trigger = now
-                    playback_proc = trigger_play(picker.pick(), afplay)
+                    playback = start_playback(picker.pick())
 
     except OSError as err:
         msg = str(err).lower()
         if "permission" in msg or "audio" in msg:
+            hint = ""
+            if sys.platform == "darwin":
+                hint = (
+                    "On macOS: System Settings → Privacy & Security → Microphone "
+                    "— enable Terminal / Python.\n"
+                )
+            elif sys.platform == "win32":
+                hint = (
+                    "On Windows: Settings → Privacy → Microphone — allow Python "
+                    "(or SlapYourMac.exe if frozen).\n"
+                )
             print(
                 f"Microphone I/O error ({err}).\n"
-                "On macOS: System Settings → Privacy & Security → Microphone — enable Terminal / Python.",
+                + hint,
                 file=sys.stderr,
             )
         else:
@@ -501,7 +695,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.open_sounds_folder:
         resolve_library_sound_paths()
-        open_sound_library_in_finder()
+        open_sound_library_folder()
         print(f"sound library folder:\n  {user_sound_library_dir()}\n")
         return 0
 
@@ -538,22 +732,37 @@ def main(argv: list[str] | None = None) -> int:
 
     picker = SoundPicker(sound_paths, args.alternate_sounds)
 
-    afplay = shutil.which("afplay")
-    if afplay is None:
-        print("afplay not found (expected on macOS).", file=sys.stderr)
+    if args.backend == "imu" and sys.platform != "darwin":
+        print(
+            "--backend imu only works on macOS (macimu / built-in notebook accelerometer).\n"
+            "On this system use:  python slap_detector.py --backend mic",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.sound_on_ac_connect and sys.platform != "darwin":
+        print(
+            "--sound-on-ac-connect is only implemented on macOS (pmset notebook power).",
+            file=sys.stderr,
+        )
         return 1
 
     backend = resolve_backend(args.backend)
+
+    if not playback_prereqs_ok():
+        return 1
+
     if args.backend == "auto":
         if backend == "imu":
-            if os.geteuid() != 0:
+            uid_fn = getattr(os, "geteuid", None)
+            if callable(uid_fn) and uid_fn() != 0:
                 print(
                     "Built-in accelerometer detected, but IMU reads require root (sudo).\n"
                     "Running without sudo — using microphone fallback.\n"
                     "For sensor mode run the same command with sudo.\n"
                 )
                 backend = "mic"
-            else:
+            elif backend == "imu":
                 print("Accelerometer detected — using IMU backend.\n")
         else:
             print(
@@ -568,9 +777,24 @@ def main(argv: list[str] | None = None) -> int:
         )
         maybe_first_frozen_launch_open_sound_folder(args)
 
-    if backend == "imu":
-        return run_imu(args, sound_paths, picker, afplay)
-    return run_mic(args, sound_paths, picker, afplay)
+    hook_stop = threading.Event()
+    if args.sound_on_ac_connect:
+        print(
+            "Also playing when notebook AC power reconnects (--sound-on-ac-connect).\n"
+        )
+        threading.Thread(
+            target=_mac_notebook_ac_change_monitor,
+            args=(picker, args.cooldown, hook_stop),
+            daemon=True,
+            name="MacACConnect",
+        ).start()
+
+    try:
+        if backend == "imu":
+            return run_imu(args, sound_paths, picker)
+        return run_mic(args, sound_paths, picker)
+    finally:
+        hook_stop.set()
 
 
 if __name__ == "__main__":
