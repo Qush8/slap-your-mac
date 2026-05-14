@@ -9,7 +9,8 @@ Two backends:
 2) Microphone — loud transient from a slap/knock picked up by the built-in mic (or default
    input). Works on **most Macs**, including MacBook Pro M1 13-inch (2020); no sudo, but macOS will ask for microphone access the first time.
    Built-in speakers can re-trigger the mic while a clip plays; the script ignores mic hits until
-   playback finishes (``afplay`` on macOS, threaded ``pygame.mixer`` elsewhere; use headphones if you
+   playback finishes (``afplay`` on macOS; on Windows ``.wav`` uses ``winsound`` so the microphone
+   stream keeps working with ``sounddevice`` — otherwise ``pygame.mixer``). Use headphones if you
    still hear double-fires).
 
 Run with ``--backend auto`` (default): use the built-in accelerometer when ``macimu`` detects it and
@@ -296,6 +297,22 @@ def _reads_external_ac_power() -> bool | None:
     return None
 
 
+def request_macos_display_wake() -> None:
+    """Assert user activity so the display can wake from idle/dim (macOS only, non-blocking)."""
+    if sys.platform != "darwin":
+        return
+    try:
+        subprocess.Popen(
+            ["/usr/bin/caffeinate", "-u", "-t", "2"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def _notebook_ac_change_monitor(
     picker: SoundPicker,
     cooldown: float,
@@ -410,6 +427,33 @@ class _AfplayPlayback:
         return self._proc.poll()
 
 
+class _WinsoundPlayback:
+    """Windows WAV playback via stdlib — avoids PortAudio/WASAPI clashes with sounddevice."""
+
+    __slots__ = ("_thread", "_exc")
+
+    def __init__(self, sound_path: str) -> None:
+        self._exc: BaseException | None = None
+        resolved = os.path.abspath(os.path.expanduser(sound_path))
+        path = os.path.join(os.path.dirname(resolved), os.path.basename(resolved))
+
+        def _run() -> None:
+            try:
+                import winsound
+
+                winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_SYNC)
+            except BaseException as err:
+                self._exc = err
+
+        self._thread = threading.Thread(target=_run, daemon=True)
+        self._thread.start()
+
+    def poll(self) -> int | None:
+        if self._thread.is_alive():
+            return None
+        return 1 if self._exc is not None else 0
+
+
 class _PygamePlayback:
     __slots__ = ("_thread", "_exc")
 
@@ -434,6 +478,22 @@ class _PygamePlayback:
                         pygame.time.wait(50)
             except BaseException as err:
                 self._exc = err
+            finally:
+                try:
+                    import pygame
+
+                    with _pygame_mixer_lock:
+                        try:
+                            pygame.mixer.music.stop()
+                        except pygame.error:
+                            pass
+                        try:
+                            pygame.mixer.quit()
+                        except pygame.error:
+                            pass
+                        _pygame_mixer_initialized = False
+                except Exception:
+                    pass
 
         self._thread = threading.Thread(target=_run, daemon=True)
         self._thread.start()
@@ -445,7 +505,7 @@ class _PygamePlayback:
 
 
 def start_playback(sound_path: str) -> PlaybackPollable:
-    """macOS: ``afplay`` subprocess. Else: ``pygame.mixer.music`` in a background thread."""
+    """macOS: ``afplay`` subprocess. Windows ``.wav``: ``winsound`` (mic-friendly). Else: pygame."""
     if sys.platform == "darwin":
         exe = shutil.which("afplay")
         if exe is None:
@@ -458,15 +518,45 @@ def start_playback(sound_path: str) -> PlaybackPollable:
             start_new_session=True,
         )
         return _AfplayPlayback(proc)
+    if sys.platform == "win32" and sound_path.lower().endswith(".wav"):
+        return _WinsoundPlayback(sound_path)
     return _PygamePlayback(sound_path)
 
 
-def playback_prereqs_ok() -> bool:
+def playback_prereqs_ok(sound_paths: list[str]) -> bool:
     """Validate external playback deps before blocking on ``main`` loops."""
+    global _pygame_mixer_initialized
     if sys.platform == "darwin":
         if shutil.which("afplay") is None:
             print("afplay not found (expected on macOS).", file=sys.stderr)
             return False
+        return True
+    if sys.platform == "win32":
+        try:
+            import winsound  # noqa: F401
+        except ImportError:
+            print("winsound is required on Windows (stdlib).", file=sys.stderr)
+            return False
+        needs_pygame = any(not p.lower().endswith(".wav") for p in sound_paths)
+        if not needs_pygame:
+            return True
+        try:
+            import pygame  # noqa: F401
+        except ImportError:
+            print(
+                "pygame required for non-WAV playback on Windows. Install with:\n"
+                "  pip install -r requirements.txt",
+                file=sys.stderr,
+            )
+            return False
+        try:
+            pygame.mixer.init(frequency=44_100, size=-16, channels=2, buffer=512)
+        except pygame.error as err:
+            print(f"pygame.mixer failed: {err}", file=sys.stderr)
+            return False
+        pygame.mixer.quit()
+        with _pygame_mixer_lock:
+            _pygame_mixer_initialized = False
         return True
     try:
         import pygame  # noqa: F401
@@ -483,7 +573,6 @@ def playback_prereqs_ok() -> bool:
         print(f"pygame.mixer failed: {err}", file=sys.stderr)
         return False
     pygame.mixer.quit()
-    global _pygame_mixer_initialized
     with _pygame_mixer_lock:
         _pygame_mixer_initialized = False
     return True
@@ -576,10 +665,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--mic-threshold",
         type=float,
-        default=0.95,
+        default=0.82,
         help=(
             "Mic: peak magnitude in (0,1] — higher = louder tap/slap needed "
-            "(default: 0.95; lower ~0.68–0.85 if real slaps are missed)"
+            "(default: 0.82; raise if noise/typing triggers; lower ~0.5–0.75 if slaps are missed)"
         ),
     )
     parser.add_argument(
@@ -643,6 +732,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         dest="keep_apple_power_chime",
         help=(
             "(macOS) With --sound-on-ac-connect, do not auto-mute Apple's charger ding."
+        ),
+    )
+    parser.add_argument(
+        "--no-wake-display",
+        action="store_false",
+        dest="wake_display",
+        default=sys.platform == "darwin",
+        help=(
+            "(macOS) Do not run caffeinate -u on slap/IMU triggers to assert user activity / wake display."
         ),
     )
     args = parser.parse_args(argv)
@@ -713,6 +811,8 @@ def run_imu(
                 now = time.monotonic()
                 if dg > args.threshold and (now - last_trigger) >= args.cooldown:
                     last_trigger = now
+                    if args.wake_display:
+                        request_macos_display_wake()
                     start_playback(picker.pick())
 
     except PermissionError:
@@ -807,6 +907,8 @@ def run_mic(
                 now = time.monotonic()
                 if peak >= args.mic_threshold and (now - last_trigger) >= args.cooldown:
                     last_trigger = now
+                    if args.wake_display:
+                        request_macos_display_wake()
                     playback = start_playback(picker.pick())
 
     except OSError as err:
@@ -940,7 +1042,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    if not playback_prereqs_ok():
+    if not playback_prereqs_ok(sound_paths):
         return 1
 
     mute_apple_explicit = args.suppress_apple_power_chime

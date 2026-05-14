@@ -28,7 +28,7 @@ pip install -r requirements.txt
 python slap_detector.py
 ```
 
-macOS skips **`pygame`** in **`requirements.txt`** (playback uses **`afplay`**). Windows and other non-macOS platforms use **`pygame.mixer`** for playback.
+macOS skips **`pygame`** in **`requirements.txt`** (playback uses **`afplay`**). On **Windows**, **`.wav`** clips play via **`winsound`** (so the mic and **sounddevice** keep working); other formats use **`pygame.mixer`**. Linux uses **pygame** for playback.
 
 On a **notebook Mac**, you can **also** play the same clips when you plug in wall power (battery → mains). Detection uses **`pmset -g batt`**. **`--suppress-apple-power-chime`**, **`--keep-apple-power-chime`**, and **PowerChime** muting apply **only on macOS**.
 
@@ -69,7 +69,7 @@ python slap_detector.py --backend mic
 
 Grant **microphone** access when prompted. The script uses Windows’ **default recording device** — select the built‑in mic or a USB headset in **Settings → System → Sound → Input**.
 
-Playback on Windows goes through **`pygame.mixer`** (SDL_mixer — typically **`.ogg`**, **`.wav`**, **`.mp3`** depending on build). **`.m4a` / AAC** may not decode; if a clip is silent or errors, convert it to **`.ogg`**, **`.wav`**, or **`.mp3`** and put it in the library folder.
+On **Windows**, **`.wav`** uses **`winsound`** (recommended for slap detection — avoids audio-device conflicts with the microphone). **`.mp3` / `.ogg` / …** use **`pygame.mixer`**. **`.m4a` / AAC** may need conversion to **`.wav`** / **`.mp3`** for reliable playback.
 
 ### Charger connect sound (battery → AC) on Windows
 
