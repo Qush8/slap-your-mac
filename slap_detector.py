@@ -591,7 +591,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help=(
             "Extra (notebook): also play clips when wall power reconnects (battery → AC). "
             "macOS: pmset. Windows: psutil battery. Same picker/cooldown as slap triggers. "
-            "On macOS, automatically mutes Apple's charger ding unless --keep-apple-power-chime."
+            "On macOS, automatically mutes Apple's charger ding unless --keep-apple-power-chime. "
+            "Bundled SlapYourMac.app (frozen) enables this by default unless --no-sound-on-ac-connect."
+        ),
+    )
+    parser.add_argument(
+        "--no-sound-on-ac-connect",
+        action="store_true",
+        dest="no_sound_on_ac_connect",
+        help=(
+            "(macOS frozen .app mainly) Disable playing clips when AC reconnects "
+            "(overrides bundled default)."
         ),
     )
     parser.add_argument(
@@ -612,7 +622,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "(macOS) With --sound-on-ac-connect, do not auto-mute Apple's charger ding."
         ),
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    # PyInstaller bundle: charger hook on by default (Finder users rarely pass CLI flags).
+    if getattr(args, "no_sound_on_ac_connect", False):
+        args.sound_on_ac_connect = False
+    elif getattr(sys, "frozen", False) and sys.platform == "darwin":
+        args.sound_on_ac_connect = True
+    return args
 
 
 def run_imu(

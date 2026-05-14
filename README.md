@@ -137,6 +137,7 @@ Output: **`dist/SlapYourMac.app`**. Copy to **Applications**, double‑click to 
 PyInstaller may warn about **codesign** (“resource fork…”): the `.app` often still runs — **right‑click → Open** the first time. To strip Finder metadata before sharing: `xattr -cr dist/SlapYourMac.app`, then retry signing if you use Apple Developer ID.
 
 - First launch: macOS asks for **microphone** access — allow **SlapYourMac**.
+- Bundled **`SlapYourMac.app`** turns on **charger connect sounds** (`--sound-on-ac-connect`) by default; pass **`--no-sound-on-ac-connect`** from Terminal only if you need to disable them.
 - Unknown developer: **System Settings → Privacy & Security → Open Anyway** after first block, or right‑click → Open.
 
 ### Share / upload
