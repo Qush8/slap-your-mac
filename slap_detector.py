@@ -25,10 +25,9 @@ Sensitivity:
     IMU: tune ``--threshold`` (Δg between samples).
     Mic: tune ``--mic-threshold`` (0..1; **higher** = only **louder** taps/slaps trigger).
 
-Multiple clips (``.m4a``, ``.mp3``, …): pass several paths after ``--sound``. Each slap picks one at
-random unless ``--alternate-sounds`` is set (strict A→B→A→B rotation).
-
-Default clips (when ``--sound`` is omitted): ``sound/mhhh.m4a`` and ``sound/ahShort.m4a`` next to this script (or inside the packaged ``.app``).
+Default clips live under ``~/Library/Application Support/SlapYourMac/sound/``. On first run the
+bundled samples are copied there; afterward add or delete ``.m4a`` / ``.mp3`` / ``.wav`` / … files
+in that folder (no reinstall). Omit ``--sound`` to use that library; pass ``--sound`` paths to override.
 
 Example::
 
@@ -67,12 +66,98 @@ def _base_dir() -> str:
     return _SCRIPT_DIR
 
 
-def default_sound_paths() -> list[str]:
-    """Bundled clips under ``sound/`` relative to this module or frozen bundle."""
-    return [
-        os.path.join(_base_dir(), "sound", "mhhh.m4a"),
-        os.path.join(_base_dir(), "sound", "ahShort.m4a"),
-    ]
+APP_NAME = "SlapYourMac"
+SOUND_EXTENSIONS = (".m4a", ".mp3", ".wav", ".aiff", ".aif", ".caf")
+
+
+def user_data_root() -> str:
+    base = os.path.expanduser("~/Library/Application Support")
+    return os.path.join(base, APP_NAME)
+
+
+def user_sound_library_dir() -> str:
+    return os.path.join(user_data_root(), "sound")
+
+
+def defaults_installed_marker_path() -> str:
+    return os.path.join(user_data_root(), ".defaults_installed")
+
+
+def bundled_sound_dir() -> str:
+    """Shipped samples next to script or inside PyInstaller bundle."""
+    return os.path.join(_base_dir(), "sound")
+
+
+def _is_known_audio_suffix(name: str) -> bool:
+    lower = name.lower()
+    return any(lower.endswith(ext) for ext in SOUND_EXTENSIONS)
+
+
+def discover_audio_paths_in_folder(folder: str) -> list[str]:
+    if not os.path.isdir(folder):
+        return []
+    names = sorted(
+        n for n in os.listdir(folder)
+        if not n.startswith(".") and _is_known_audio_suffix(n)
+    )
+    return [os.path.join(folder, n) for n in names]
+
+
+def _copy_bundled_samples_into_user_library() -> int:
+    """Copy bundled clips into Application Support sound dir. Returns number of files copied."""
+    bundled = bundled_sound_dir()
+    if not os.path.isdir(bundled):
+        return 0
+    dst_dir = user_sound_library_dir()
+    os.makedirs(dst_dir, exist_ok=True)
+    copied = 0
+    for name in sorted(os.listdir(bundled)):
+        if name.startswith(".") or not _is_known_audio_suffix(name):
+            continue
+        src = os.path.join(bundled, name)
+        if not os.path.isfile(src) or os.path.getsize(src) == 0:
+            continue
+        dst_path = os.path.join(dst_dir, name)
+        if not os.path.isfile(dst_path):
+            shutil.copy2(src, dst_path)
+            copied += 1
+    return copied
+
+
+def resolve_library_sound_paths() -> list[str]:
+    """
+    Use ``~/Library/Application Support/SlapYourMac/sound/``.
+
+    - If clips are already there: use them (sorted).
+    - If empty and bundled defaults never installed: copy bundled samples, create marker file.
+    - If empty but marker exists: user removed everything — returns [] so main prints a hint.
+    """
+    lib_dir = user_sound_library_dir()
+    os.makedirs(lib_dir, exist_ok=True)
+
+    marker = defaults_installed_marker_path()
+    paths = discover_audio_paths_in_folder(lib_dir)
+
+    if paths:
+        if not os.path.isfile(marker):
+            try:
+                with open(marker, "w", encoding="utf-8"):
+                    pass
+            except OSError:
+                pass
+        return sorted(paths)
+
+    if not os.path.isfile(marker):
+        _copy_bundled_samples_into_user_library()
+        paths = discover_audio_paths_in_folder(lib_dir)
+        if paths:
+            try:
+                with open(marker, "w", encoding="utf-8"):
+                    pass
+            except OSError:
+                pass
+
+    return sorted(paths)
 
 
 def delta_g(prev: tuple[float, float, float], cur: tuple[float, float, float]) -> float:
@@ -140,9 +225,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         metavar="PATH",
         help=(
-            "One or more audio paths (macOS afplay: .m4a, .mp3, .caf, .aiff/.aif, .wav, …). "
-            "Multiple files: random choice per slap unless --alternate-sounds. "
-            "Default when omitted: sound/mhhh.m4a and sound/ahShort.m4a beside this script."
+            "Override automatic library with explicit paths (macOS afplay formats). "
+            "When omitted, sounds are loaded from ~/Library/Application Support/"
+            + APP_NAME
+            + "/sound/ — add or remove clips there."
         ),
     )
     parser.add_argument(
@@ -176,8 +262,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         type=float,
         default=0.95,
         help=(
-            "Mic: peak magnitude in (0,1] required — higher = much louder slap/tap needed "
-            "(default: 0.95; try 0.95–1 if tiny noises still trigger; lower ~0.55 if real slaps miss)"
+            "Mic: peak magnitude in (0,1] — higher = louder tap/slap needed "
+            "(default: 0.95; lower ~0.68–0.85 if real slaps are missed)"
         ),
     )
     parser.add_argument(
@@ -368,10 +454,26 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(signal, "SIGCHLD"):
         signal.signal(signal.SIGCHLD, signal.SIG_IGN)
 
-    raw_paths = args.sound if args.sound is not None else default_sound_paths()
+    if args.sound is not None:
+        candidates = [os.path.abspath(os.path.expanduser(p)) for p in args.sound]
+    else:
+        candidates = resolve_library_sound_paths()
+        if not candidates:
+            print(
+                "No usable audio clips found.\n"
+                f"Put files here (extensions: {', '.join(SOUND_EXTENSIONS)}):\n"
+                f"  {user_sound_library_dir()}\n"
+                "Bundled demos copy themselves on first launch; if you removed everything, "
+                "add clips or reset by deleting:\n"
+                f"  {defaults_installed_marker_path()}\n"
+                "and the clips in that folder, then launch once to re-copy samples.\n"
+                "Alternatively pass explicit paths after --sound.\n",
+                file=sys.stderr,
+            )
+            return 1
+
     sound_paths: list[str] = []
-    for raw in raw_paths:
-        sound_abs = os.path.abspath(os.path.expanduser(raw))
+    for sound_abs in candidates:
         if not os.path.isfile(sound_abs):
             print(f"sound file not found: {sound_abs}", file=sys.stderr)
             return 1
@@ -407,6 +509,12 @@ def main(argv: list[str] | None = None) -> int:
                 "No built-in accelerometer detected — using microphone fallback "
                 "(grant mic access when asked).\n"
             )
+
+    if args.sound is None:
+        print(
+            "sound library folder (add/remove .m4a, .mp3, … clips anytime):\n"
+            f"  {user_sound_library_dir()}\n"
+        )
 
     if backend == "imu":
         return run_imu(args, sound_paths, picker, afplay)

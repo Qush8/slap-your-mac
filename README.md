@@ -11,6 +11,18 @@ pip install -r requirements.txt
 python slap_detector.py
 ```
 
+## Sound clips (no rebuild needed)
+
+Tracks are loaded from **`~/Library/Application Support/SlapYourMac/sound/`** (created on first launch).
+
+1. Run the app **once** — bundled demo clips are copied there if the folder is empty.
+2. Add or delete **`.m4a`**, **`.mp3`**, **`.wav`**, **`.aiff`**, **`.aif`**, or **`.caf`** files and **restart** the app.
+3. To get the bundled demos again after removing everything: delete  
+   **`~/Library/Application Support/SlapYourMac/.defaults_installed`**  
+   and clear clips in `sound/` (or remove the clips only and add your own), then launch once with an empty library to re-seed.
+
+Override with explicit paths: `python slap_detector.py --sound /path/a.m4a /path/b.m4a`
+
 ## Build the macOS app (double‑click, no Terminal)
 
 Requires Xcode Command Line Tools for code signing hints (PyInstaller still builds without your own signing).
@@ -36,6 +48,16 @@ cd dist && zip -ry ../SlapYourMac.app.zip SlapYourMac.app
 ```
 
 Recipients unzip and move `SlapYourMac.app` to Applications.
+
+### “SlapYourMac is damaged and can’t be opened”
+
+Usually **Gatekeeper / quarantine**, not a corrupted download. On the recipient’s Mac run:
+
+```bash
+xattr -cr /Applications/SlapYourMac.app
+```
+
+(Adjust the path if the app is elsewhere.) Or **right‑click the app → Open → Open**, and check **System Settings → Privacy & Security → Open Anyway**.
 
 ## Start at login (optional)
 
