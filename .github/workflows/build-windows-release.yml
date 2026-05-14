@@ -25,15 +25,25 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install deps and PyInstaller build
+      - name: Install Python dependencies
         shell: pwsh
         run: |
           python -m venv .venv
           .\.venv\Scripts\Activate.ps1
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Install PyInstaller
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\Activate.ps1
           pip install pyinstaller
-          python -m PyInstaller slap-your-mac-win.spec
+
+      - name: Build Windows exe (onefile, windowed)
+        shell: pwsh
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          python -m PyInstaller --noconfirm --onefile --windowed slap-your-mac-win.spec
 
       - name: Create releases/SlapYourMac-windows.zip
         shell: pwsh

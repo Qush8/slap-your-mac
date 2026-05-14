@@ -415,7 +415,8 @@ class _PygamePlayback:
 
     def __init__(self, sound_path: str) -> None:
         self._exc: BaseException | None = None
-        path = os.path.normpath(os.path.abspath(sound_path))
+        resolved = os.path.abspath(os.path.expanduser(sound_path))
+        path = os.path.join(os.path.dirname(resolved), os.path.basename(resolved))
 
         def _run() -> None:
             global _pygame_mixer_initialized
