@@ -43,7 +43,21 @@ jobs:
         shell: pwsh
         run: |
           .\.venv\Scripts\Activate.ps1
-          python -m PyInstaller --noconfirm --onefile --windowed slap-your-mac-win.spec
+          python -m PyInstaller --noconfirm --onefile --windowed --name SlapYourMac `
+            --add-data "sound/mhhh.wav;sound" `
+            --add-data "sound/ahShort.wav;sound" `
+            --hidden-import numpy `
+            --hidden-import numpy.core._multiarray_umath `
+            --hidden-import sounddevice `
+            --hidden-import _sounddevice `
+            --hidden-import _sounddevice_data `
+            --hidden-import pygame `
+            --hidden-import pygame.mixer `
+            --hidden-import pygame.mixer_music `
+            --hidden-import psutil `
+            --hidden-import cffi `
+            --hidden-import _cffi_backend `
+            slap_detector.py
 
       - name: Create releases/SlapYourMac-windows.zip
         shell: pwsh

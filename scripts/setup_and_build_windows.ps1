@@ -1,4 +1,4 @@
-# Requires Windows with Python 3.10+ in PATH (recommended 3.10–3.13).
+# Requires Windows with Python 3.10+ in PATH (CI uses 3.11 — match that for fewest surprises).
 # Run from anywhere:
 #   powershell -ExecutionPolicy Bypass -File .\scripts\setup_and_build_windows.ps1
 
@@ -27,8 +27,22 @@ if (-not (Test-Path $venvPython)) {
 & $venvPip install -q -r requirements.txt -r requirements-build.txt
 & $venvPip install -q pyinstaller
 
-Write-Host "Building Windows one-file exe with PyInstaller..."
-& $venvPython -m PyInstaller slap-your-mac-win.spec
+Write-Host "Building Windows one-file exe with PyInstaller (same invocation as GitHub Actions)..."
+& $venvPython -m PyInstaller --noconfirm --onefile --windowed --name SlapYourMac `
+  --add-data "sound/mhhh.wav;sound" `
+  --add-data "sound/ahShort.wav;sound" `
+  --hidden-import numpy `
+  --hidden-import numpy.core._multiarray_umath `
+  --hidden-import sounddevice `
+  --hidden-import _sounddevice `
+  --hidden-import _sounddevice_data `
+  --hidden-import pygame `
+  --hidden-import pygame.mixer `
+  --hidden-import pygame.mixer_music `
+  --hidden-import psutil `
+  --hidden-import cffi `
+  --hidden-import _cffi_backend `
+  slap_detector.py
 
 $distExe = Join-Path $Root "dist\SlapYourMac.exe"
 $releases = Join-Path $Root "releases"
